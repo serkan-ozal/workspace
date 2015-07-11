@@ -1,0 +1,199 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/c1 </title>
+</head><body id="SUNWwebrev">
+<center>&lt prev <a href='../../../../index.html' target='_top'>index</a> next &gt</center>
+<h2>src/share/vm/c1/c1_Canonicalizer.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 933   if (!match_found) {
+ 934     *base = root-&gt;x();
+ 935     *index = root-&gt;y();
+ 936     *log2_scale = 0;
+ 937   }
+ 938 
+ 939   // If the value is pinned then it will be always be computed so
+ 940   // there's no profit to reshaping the expression.
+ 941   return !root-&gt;is_pinned();
+ 942 }
+ 943 
+ 944 
+ 945 void Canonicalizer::do_UnsafeRawOp(UnsafeRawOp* x) {
+ 946   Instruction* base = NULL;
+ 947   Instruction* index = NULL;
+ 948   int          log2_scale;
+ 949 
+ 950   if (match(x, &amp;base, &amp;index, &amp;log2_scale)) {
+ 951     x-&gt;set_base(base);
+ 952     x-&gt;set_index(index);
+
+
+
+
+
+
+
+
+
+
+
+ 953     x-&gt;set_log2_scale(log2_scale);
+ 954     if (PrintUnsafeOptimization) {
+ 955       tty-&gt;print_cr("Canonicalizer: UnsafeRawOp id %d: base = id %d, index = id %d, log2_scale = %d",
+ 956                     x-&gt;id(), x-&gt;base()-&gt;id(), x-&gt;index()-&gt;id(), x-&gt;log2_scale());
+ 957     }
+ 958   }
+ 959 }
+ 960 
+ 961 void Canonicalizer::do_RoundFP(RoundFP* x) {}
+ 962 void Canonicalizer::do_UnsafeGetRaw(UnsafeGetRaw* x) { if (OptimizeUnsafes) do_UnsafeRawOp(x); }
+ 963 void Canonicalizer::do_UnsafePutRaw(UnsafePutRaw* x) { if (OptimizeUnsafes) do_UnsafeRawOp(x); }
+ 964 void Canonicalizer::do_UnsafeGetObject(UnsafeGetObject* x) {}
+ 965 void Canonicalizer::do_UnsafePutObject(UnsafePutObject* x) {}
+ 966 void Canonicalizer::do_UnsafeGetAndSetObject(UnsafeGetAndSetObject* x) {}
+ 967 void Canonicalizer::do_UnsafePrefetchRead (UnsafePrefetchRead*  x) {}
+ 968 void Canonicalizer::do_UnsafePrefetchWrite(UnsafePrefetchWrite* x) {}
+ 969 void Canonicalizer::do_ProfileCall(ProfileCall* x) {}
+ 970 void Canonicalizer::do_ProfileReturnType(ProfileReturnType* x) {}
+ 971 void Canonicalizer::do_ProfileInvoke(ProfileInvoke* x) {}
+ 972 void Canonicalizer::do_RuntimeCall(RuntimeCall* x) {}
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 933   if (!match_found) {
+ 934     *base = root-&gt;x();
+ 935     *index = root-&gt;y();
+ 936     *log2_scale = 0;
+ 937   }
+ 938 
+ 939   // If the value is pinned then it will be always be computed so
+ 940   // there's no profit to reshaping the expression.
+ 941   return !root-&gt;is_pinned();
+ 942 }
+ 943 
+ 944 
+ 945 void Canonicalizer::do_UnsafeRawOp(UnsafeRawOp* x) {
+ 946   Instruction* base = NULL;
+ 947   Instruction* index = NULL;
+ 948   int          log2_scale;
+ 949 
+ 950   if (match(x, &amp;base, &amp;index, &amp;log2_scale)) {
+ 951     x-&gt;set_base(base);
+ 952     x-&gt;set_index(index);
+<span class="new"> 953     if (index != NULL) {</span>
+<span class="new"> 954       // If index is pinned, do not scale again</span>
+<span class="new"> 955       if (index-&gt;is_pinned()) {</span>
+<span class="new"> 956         log2_scale = 0;</span>
+<span class="new"> 957       } else {</span>
+<span class="new"> 958         // If there is a scale, pin the index so it won't be scaled again</span>
+<span class="new"> 959         if (log2_scale != 0) {</span>
+<span class="new"> 960           index-&gt;pin();</span>
+<span class="new"> 961         }</span>
+<span class="new"> 962       } </span>
+<span class="new"> 963     }</span>
+ 964     x-&gt;set_log2_scale(log2_scale);
+ 965     if (PrintUnsafeOptimization) {
+ 966       tty-&gt;print_cr("Canonicalizer: UnsafeRawOp id %d: base = id %d, index = id %d, log2_scale = %d",
+ 967                     x-&gt;id(), x-&gt;base()-&gt;id(), x-&gt;index()-&gt;id(), x-&gt;log2_scale());
+ 968     }
+ 969   }
+ 970 }
+ 971 
+ 972 void Canonicalizer::do_RoundFP(RoundFP* x) {}
+ 973 void Canonicalizer::do_UnsafeGetRaw(UnsafeGetRaw* x) { if (OptimizeUnsafes) do_UnsafeRawOp(x); }
+ 974 void Canonicalizer::do_UnsafePutRaw(UnsafePutRaw* x) { if (OptimizeUnsafes) do_UnsafeRawOp(x); }
+ 975 void Canonicalizer::do_UnsafeGetObject(UnsafeGetObject* x) {}
+ 976 void Canonicalizer::do_UnsafePutObject(UnsafePutObject* x) {}
+ 977 void Canonicalizer::do_UnsafeGetAndSetObject(UnsafeGetAndSetObject* x) {}
+ 978 void Canonicalizer::do_UnsafePrefetchRead (UnsafePrefetchRead*  x) {}
+ 979 void Canonicalizer::do_UnsafePrefetchWrite(UnsafePrefetchWrite* x) {}
+ 980 void Canonicalizer::do_ProfileCall(ProfileCall* x) {}
+ 981 void Canonicalizer::do_ProfileReturnType(ProfileReturnType* x) {}
+ 982 void Canonicalizer::do_ProfileInvoke(ProfileInvoke* x) {}
+ 983 void Canonicalizer::do_RuntimeCall(RuntimeCall* x) {}
+</pre></td>
+</tr></table>
+<center>&lt prev <a href='../../../../index.html' target='_top'>index</a> next &gt</center>
+</body></html>

@@ -1,0 +1,20 @@
+--- old/src/share/vm/c1/c1_Canonicalizer.cpp	2015-07-12 00:21:15.000000000 +0300
++++ new/src/share/vm/c1/c1_Canonicalizer.cpp	2015-07-12 00:21:15.000000000 +0300
+@@ -950,6 +950,17 @@
+   if (match(x, &base, &index, &log2_scale)) {
+     x->set_base(base);
+     x->set_index(index);
++    if (index != NULL) {
++      // If index is pinned, do not scale again
++      if (index->is_pinned()) {
++        log2_scale = 0;
++      } else {
++        // If there is a scale, pin the index so it won't be scaled again
++        if (log2_scale != 0) {
++          index->pin();
++        }
++      } 
++    }
+     x->set_log2_scale(log2_scale);
+     if (PrintUnsafeOptimization) {
+       tty->print_cr("Canonicalizer: UnsafeRawOp id %d: base = id %d, index = id %d, log2_scale = %d",

@@ -1,0 +1,1060 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old src/share/vm/c1/c1_Canonicalizer.cpp</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  *
+  23  */
+  24 
+  25 #include "precompiled.hpp"
+  26 #include "c1/c1_Canonicalizer.hpp"
+  27 #include "c1/c1_InstructionPrinter.hpp"
+  28 #include "c1/c1_ValueStack.hpp"
+  29 #include "ci/ciArray.hpp"
+  30 #include "runtime/sharedRuntime.hpp"
+  31 
+  32 
+  33 class PrintValueVisitor: public ValueVisitor {
+  34   void visit(Value* vp) {
+  35     (*vp)-&gt;print_line();
+  36   }
+  37 };
+  38 
+  39 void Canonicalizer::set_canonical(Value x) {
+  40   assert(x != NULL, "value must exist");
+  41   // Note: we can not currently substitute root nodes which show up in
+  42   // the instruction stream (because the instruction list is embedded
+  43   // in the instructions).
+  44   if (canonical() != x) {
+  45 #ifndef PRODUCT
+  46     if (!x-&gt;has_printable_bci()) {
+  47       x-&gt;set_printable_bci(bci());
+  48     }
+  49 #endif
+  50     if (PrintCanonicalization) {
+  51       PrintValueVisitor do_print_value;
+  52       canonical()-&gt;input_values_do(&amp;do_print_value);
+  53       canonical()-&gt;print_line();
+  54       tty-&gt;print_cr("canonicalized to:");
+  55       x-&gt;input_values_do(&amp;do_print_value);
+  56       x-&gt;print_line();
+  57       tty-&gt;cr();
+  58     }
+  59     assert(_canonical-&gt;type()-&gt;tag() == x-&gt;type()-&gt;tag(), "types must match");
+  60     _canonical = x;
+  61   }
+  62 }
+  63 
+  64 
+  65 void Canonicalizer::move_const_to_right(Op2* x) {
+  66   if (x-&gt;x()-&gt;type()-&gt;is_constant() &amp;&amp; x-&gt;is_commutative()) x-&gt;swap_operands();
+  67 }
+  68 
+  69 
+  70 void Canonicalizer::do_Op2(Op2* x) {
+  71   if (x-&gt;x() == x-&gt;y()) {
+  72     switch (x-&gt;op()) {
+  73     case Bytecodes::_isub: set_constant(0); return;
+  74     case Bytecodes::_lsub: set_constant(jlong_cast(0)); return;
+  75     case Bytecodes::_iand: // fall through
+  76     case Bytecodes::_land: // fall through
+  77     case Bytecodes::_ior:  // fall through
+  78     case Bytecodes::_lor : set_canonical(x-&gt;x()); return;
+  79     case Bytecodes::_ixor: set_constant(0); return;
+  80     case Bytecodes::_lxor: set_constant(jlong_cast(0)); return;
+  81     }
+  82   }
+  83 
+  84   if (x-&gt;x()-&gt;type()-&gt;is_constant() &amp;&amp; x-&gt;y()-&gt;type()-&gt;is_constant()) {
+  85     // do constant folding for selected operations
+  86     switch (x-&gt;type()-&gt;tag()) {
+  87       case intTag:
+  88         { jint a = x-&gt;x()-&gt;type()-&gt;as_IntConstant()-&gt;value();
+  89           jint b = x-&gt;y()-&gt;type()-&gt;as_IntConstant()-&gt;value();
+  90           switch (x-&gt;op()) {
+  91             case Bytecodes::_iadd: set_constant(a + b); return;
+  92             case Bytecodes::_isub: set_constant(a - b); return;
+  93             case Bytecodes::_imul: set_constant(a * b); return;
+  94             case Bytecodes::_idiv:
+  95               if (b != 0) {
+  96                 if (a == min_jint &amp;&amp; b == -1) {
+  97                   set_constant(min_jint);
+  98                 } else {
+  99                   set_constant(a / b);
+ 100                 }
+ 101                 return;
+ 102               }
+ 103               break;
+ 104             case Bytecodes::_irem:
+ 105               if (b != 0) {
+ 106                 if (a == min_jint &amp;&amp; b == -1) {
+ 107                   set_constant(0);
+ 108                 } else {
+ 109                   set_constant(a % b);
+ 110                 }
+ 111                 return;
+ 112               }
+ 113               break;
+ 114             case Bytecodes::_iand: set_constant(a &amp; b); return;
+ 115             case Bytecodes::_ior : set_constant(a | b); return;
+ 116             case Bytecodes::_ixor: set_constant(a ^ b); return;
+ 117           }
+ 118         }
+ 119         break;
+ 120       case longTag:
+ 121         { jlong a = x-&gt;x()-&gt;type()-&gt;as_LongConstant()-&gt;value();
+ 122           jlong b = x-&gt;y()-&gt;type()-&gt;as_LongConstant()-&gt;value();
+ 123           switch (x-&gt;op()) {
+ 124             case Bytecodes::_ladd: set_constant(a + b); return;
+ 125             case Bytecodes::_lsub: set_constant(a - b); return;
+ 126             case Bytecodes::_lmul: set_constant(a * b); return;
+ 127             case Bytecodes::_ldiv:
+ 128               if (b != 0) {
+ 129                 set_constant(SharedRuntime::ldiv(b, a));
+ 130                 return;
+ 131               }
+ 132               break;
+ 133             case Bytecodes::_lrem:
+ 134               if (b != 0) {
+ 135                 set_constant(SharedRuntime::lrem(b, a));
+ 136                 return;
+ 137               }
+ 138               break;
+ 139             case Bytecodes::_land: set_constant(a &amp; b); return;
+ 140             case Bytecodes::_lor : set_constant(a | b); return;
+ 141             case Bytecodes::_lxor: set_constant(a ^ b); return;
+ 142           }
+ 143         }
+ 144         break;
+ 145       // other cases not implemented (must be extremely careful with floats &amp; doubles!)
+ 146     }
+ 147   }
+ 148   // make sure constant is on the right side, if any
+ 149   move_const_to_right(x);
+ 150 
+ 151   if (x-&gt;y()-&gt;type()-&gt;is_constant()) {
+ 152     // do constant folding for selected operations
+ 153     switch (x-&gt;type()-&gt;tag()) {
+ 154       case intTag:
+ 155         if (x-&gt;y()-&gt;type()-&gt;as_IntConstant()-&gt;value() == 0) {
+ 156           switch (x-&gt;op()) {
+ 157             case Bytecodes::_iadd: set_canonical(x-&gt;x()); return;
+ 158             case Bytecodes::_isub: set_canonical(x-&gt;x()); return;
+ 159             case Bytecodes::_imul: set_constant(0); return;
+ 160               // Note: for div and rem, make sure that C semantics
+ 161               //       corresponds to Java semantics!
+ 162             case Bytecodes::_iand: set_constant(0); return;
+ 163             case Bytecodes::_ior : set_canonical(x-&gt;x()); return;
+ 164           }
+ 165         }
+ 166         break;
+ 167       case longTag:
+ 168         if (x-&gt;y()-&gt;type()-&gt;as_LongConstant()-&gt;value() == (jlong)0) {
+ 169           switch (x-&gt;op()) {
+ 170             case Bytecodes::_ladd: set_canonical(x-&gt;x()); return;
+ 171             case Bytecodes::_lsub: set_canonical(x-&gt;x()); return;
+ 172             case Bytecodes::_lmul: set_constant((jlong)0); return;
+ 173               // Note: for div and rem, make sure that C semantics
+ 174               //       corresponds to Java semantics!
+ 175             case Bytecodes::_land: set_constant((jlong)0); return;
+ 176             case Bytecodes::_lor : set_canonical(x-&gt;x()); return;
+ 177           }
+ 178         }
+ 179         break;
+ 180     }
+ 181   }
+ 182 }
+ 183 
+ 184 
+ 185 void Canonicalizer::do_Phi            (Phi*             x) {}
+ 186 void Canonicalizer::do_Constant       (Constant*        x) {}
+ 187 void Canonicalizer::do_Local          (Local*           x) {}
+ 188 void Canonicalizer::do_LoadField      (LoadField*       x) {}
+ 189 
+ 190 // checks if v is in the block that is currently processed by
+ 191 // GraphBuilder. This is the only block that has not BlockEnd yet.
+ 192 static bool in_current_block(Value v) {
+ 193   int max_distance = 4;
+ 194   while (max_distance &gt; 0 &amp;&amp; v != NULL &amp;&amp; v-&gt;as_BlockEnd() == NULL) {
+ 195     v = v-&gt;next();
+ 196     max_distance--;
+ 197   }
+ 198   return v == NULL;
+ 199 }
+ 200 
+ 201 void Canonicalizer::do_StoreField     (StoreField*      x) {
+ 202   // If a value is going to be stored into a field or array some of
+ 203   // the conversions emitted by javac are unneeded because the fields
+ 204   // are packed to their natural size.
+ 205   Convert* conv = x-&gt;value()-&gt;as_Convert();
+ 206   if (conv) {
+ 207     Value value = NULL;
+ 208     BasicType type = x-&gt;field()-&gt;type()-&gt;basic_type();
+ 209     switch (conv-&gt;op()) {
+ 210     case Bytecodes::_i2b: if (type == T_BYTE)  value = conv-&gt;value(); break;
+ 211     case Bytecodes::_i2s: if (type == T_SHORT || type == T_BYTE) value = conv-&gt;value(); break;
+ 212     case Bytecodes::_i2c: if (type == T_CHAR  || type == T_BYTE)  value = conv-&gt;value(); break;
+ 213     }
+ 214     // limit this optimization to current block
+ 215     if (value != NULL &amp;&amp; in_current_block(conv)) {
+ 216       set_canonical(new StoreField(x-&gt;obj(), x-&gt;offset(), x-&gt;field(), value, x-&gt;is_static(),
+ 217                                    x-&gt;state_before(), x-&gt;needs_patching()));
+ 218       return;
+ 219     }
+ 220   }
+ 221 
+ 222 }
+ 223 
+ 224 void Canonicalizer::do_ArrayLength    (ArrayLength*     x) {
+ 225   NewArray* array = x-&gt;array()-&gt;as_NewArray();
+ 226   if (array != NULL &amp;&amp; array-&gt;length() != NULL) {
+ 227     Constant* length = array-&gt;length()-&gt;as_Constant();
+ 228     if (length != NULL) {
+ 229       // do not use the Constant itself, but create a new Constant
+ 230       // with same value Otherwise a Constant is live over multiple
+ 231       // blocks without being registered in a state array.
+ 232       assert(length-&gt;type()-&gt;as_IntConstant() != NULL, "array length must be integer");
+ 233       set_constant(length-&gt;type()-&gt;as_IntConstant()-&gt;value());
+ 234     }
+ 235   } else {
+ 236     LoadField* lf = x-&gt;array()-&gt;as_LoadField();
+ 237     if (lf != NULL) {
+ 238       ciField* field = lf-&gt;field();
+ 239       if (field-&gt;is_constant() &amp;&amp; field-&gt;is_static()) {
+ 240         // final static field
+ 241         ciObject* c = field-&gt;constant_value().as_object();
+ 242         if (c-&gt;is_array()) {
+ 243           ciArray* array = (ciArray*) c;
+ 244           set_constant(array-&gt;length());
+ 245         }
+ 246       }
+ 247     }
+ 248   }
+ 249 }
+ 250 
+ 251 void Canonicalizer::do_LoadIndexed    (LoadIndexed*     x) {}
+ 252 void Canonicalizer::do_StoreIndexed   (StoreIndexed*    x) {
+ 253   // If a value is going to be stored into a field or array some of
+ 254   // the conversions emitted by javac are unneeded because the fields
+ 255   // are packed to their natural size.
+ 256   Convert* conv = x-&gt;value()-&gt;as_Convert();
+ 257   if (conv) {
+ 258     Value value = NULL;
+ 259     BasicType type = x-&gt;elt_type();
+ 260     switch (conv-&gt;op()) {
+ 261     case Bytecodes::_i2b: if (type == T_BYTE)  value = conv-&gt;value(); break;
+ 262     case Bytecodes::_i2s: if (type == T_SHORT || type == T_BYTE) value = conv-&gt;value(); break;
+ 263     case Bytecodes::_i2c: if (type == T_CHAR  || type == T_BYTE) value = conv-&gt;value(); break;
+ 264     }
+ 265     // limit this optimization to current block
+ 266     if (value != NULL &amp;&amp; in_current_block(conv)) {
+ 267       set_canonical(new StoreIndexed(x-&gt;array(), x-&gt;index(), x-&gt;length(),
+ 268                                      x-&gt;elt_type(), value, x-&gt;state_before()));
+ 269       return;
+ 270     }
+ 271   }
+ 272 
+ 273 
+ 274 }
+ 275 
+ 276 
+ 277 void Canonicalizer::do_NegateOp(NegateOp* x) {
+ 278   ValueType* t = x-&gt;x()-&gt;type();
+ 279   if (t-&gt;is_constant()) {
+ 280     switch (t-&gt;tag()) {
+ 281       case intTag   : set_constant(-t-&gt;as_IntConstant   ()-&gt;value()); return;
+ 282       case longTag  : set_constant(-t-&gt;as_LongConstant  ()-&gt;value()); return;
+ 283       case floatTag : set_constant(-t-&gt;as_FloatConstant ()-&gt;value()); return;
+ 284       case doubleTag: set_constant(-t-&gt;as_DoubleConstant()-&gt;value()); return;
+ 285       default       : ShouldNotReachHere();
+ 286     }
+ 287   }
+ 288 }
+ 289 
+ 290 
+ 291 void Canonicalizer::do_ArithmeticOp   (ArithmeticOp*    x) { do_Op2(x); }
+ 292 
+ 293 
+ 294 void Canonicalizer::do_ShiftOp        (ShiftOp*         x) {
+ 295   ValueType* t = x-&gt;x()-&gt;type();
+ 296   ValueType* t2 = x-&gt;y()-&gt;type();
+ 297   if (t-&gt;is_constant()) {
+ 298     switch (t-&gt;tag()) {
+ 299     case intTag   : if (t-&gt;as_IntConstant()-&gt;value() == 0)         { set_constant(0); return; } break;
+ 300     case longTag  : if (t-&gt;as_LongConstant()-&gt;value() == (jlong)0) { set_constant(jlong_cast(0)); return; } break;
+ 301     default       : ShouldNotReachHere();
+ 302     }
+ 303     if (t2-&gt;is_constant()) {
+ 304       if (t-&gt;tag() == intTag) {
+ 305         int value = t-&gt;as_IntConstant()-&gt;value();
+ 306         int shift = t2-&gt;as_IntConstant()-&gt;value() &amp; 31;
+ 307         jint mask = ~(~0 &lt;&lt; (32 - shift));
+ 308         if (shift == 0) mask = ~0;
+ 309         switch (x-&gt;op()) {
+ 310           case Bytecodes::_ishl:  set_constant(value &lt;&lt; shift); return;
+ 311           case Bytecodes::_ishr:  set_constant(value &gt;&gt; shift); return;
+ 312           case Bytecodes::_iushr: set_constant((value &gt;&gt; shift) &amp; mask); return;
+ 313         }
+ 314       } else if (t-&gt;tag() == longTag) {
+ 315         jlong value = t-&gt;as_LongConstant()-&gt;value();
+ 316         int shift = t2-&gt;as_IntConstant()-&gt;value() &amp; 63;
+ 317         jlong mask = ~(~jlong_cast(0) &lt;&lt; (64 - shift));
+ 318         if (shift == 0) mask = ~jlong_cast(0);
+ 319         switch (x-&gt;op()) {
+ 320           case Bytecodes::_lshl:  set_constant(value &lt;&lt; shift); return;
+ 321           case Bytecodes::_lshr:  set_constant(value &gt;&gt; shift); return;
+ 322           case Bytecodes::_lushr: set_constant((value &gt;&gt; shift) &amp; mask); return;
+ 323         }
+ 324       }
+ 325     }
+ 326   }
+ 327   if (t2-&gt;is_constant()) {
+ 328     switch (t2-&gt;tag()) {
+ 329       case intTag   : if (t2-&gt;as_IntConstant()-&gt;value() == 0)  set_canonical(x-&gt;x()); return;
+ 330       case longTag  : if (t2-&gt;as_LongConstant()-&gt;value() == (jlong)0)  set_canonical(x-&gt;x()); return;
+ 331       default       : ShouldNotReachHere();
+ 332     }
+ 333   }
+ 334 }
+ 335 
+ 336 
+ 337 void Canonicalizer::do_LogicOp        (LogicOp*         x) { do_Op2(x); }
+ 338 void Canonicalizer::do_CompareOp      (CompareOp*       x) {
+ 339   if (x-&gt;x() == x-&gt;y()) {
+ 340     switch (x-&gt;x()-&gt;type()-&gt;tag()) {
+ 341       case longTag: set_constant(0); break;
+ 342       case floatTag: {
+ 343         FloatConstant* fc = x-&gt;x()-&gt;type()-&gt;as_FloatConstant();
+ 344         if (fc) {
+ 345           if (g_isnan(fc-&gt;value())) {
+ 346             set_constant(x-&gt;op() == Bytecodes::_fcmpl ? -1 : 1);
+ 347           } else {
+ 348             set_constant(0);
+ 349           }
+ 350         }
+ 351         break;
+ 352       }
+ 353       case doubleTag: {
+ 354         DoubleConstant* dc = x-&gt;x()-&gt;type()-&gt;as_DoubleConstant();
+ 355         if (dc) {
+ 356           if (g_isnan(dc-&gt;value())) {
+ 357             set_constant(x-&gt;op() == Bytecodes::_dcmpl ? -1 : 1);
+ 358           } else {
+ 359             set_constant(0);
+ 360           }
+ 361         }
+ 362         break;
+ 363       }
+ 364     }
+ 365   } else if (x-&gt;x()-&gt;type()-&gt;is_constant() &amp;&amp; x-&gt;y()-&gt;type()-&gt;is_constant()) {
+ 366     switch (x-&gt;x()-&gt;type()-&gt;tag()) {
+ 367       case longTag: {
+ 368         jlong vx = x-&gt;x()-&gt;type()-&gt;as_LongConstant()-&gt;value();
+ 369         jlong vy = x-&gt;y()-&gt;type()-&gt;as_LongConstant()-&gt;value();
+ 370         if (vx == vy)
+ 371           set_constant(0);
+ 372         else if (vx &lt; vy)
+ 373           set_constant(-1);
+ 374         else
+ 375           set_constant(1);
+ 376         break;
+ 377       }
+ 378 
+ 379       case floatTag: {
+ 380         float vx = x-&gt;x()-&gt;type()-&gt;as_FloatConstant()-&gt;value();
+ 381         float vy = x-&gt;y()-&gt;type()-&gt;as_FloatConstant()-&gt;value();
+ 382         if (g_isnan(vx) || g_isnan(vy))
+ 383           set_constant(x-&gt;op() == Bytecodes::_fcmpl ? -1 : 1);
+ 384         else if (vx == vy)
+ 385           set_constant(0);
+ 386         else if (vx &lt; vy)
+ 387           set_constant(-1);
+ 388         else
+ 389           set_constant(1);
+ 390         break;
+ 391       }
+ 392 
+ 393       case doubleTag: {
+ 394         double vx = x-&gt;x()-&gt;type()-&gt;as_DoubleConstant()-&gt;value();
+ 395         double vy = x-&gt;y()-&gt;type()-&gt;as_DoubleConstant()-&gt;value();
+ 396         if (g_isnan(vx) || g_isnan(vy))
+ 397           set_constant(x-&gt;op() == Bytecodes::_dcmpl ? -1 : 1);
+ 398         else if (vx == vy)
+ 399           set_constant(0);
+ 400         else if (vx &lt; vy)
+ 401           set_constant(-1);
+ 402         else
+ 403           set_constant(1);
+ 404         break;
+ 405       }
+ 406     }
+ 407 
+ 408   }
+ 409 }
+ 410 
+ 411 
+ 412 void Canonicalizer::do_IfInstanceOf(IfInstanceOf*    x) {}
+ 413 
+ 414 void Canonicalizer::do_IfOp(IfOp* x) {
+ 415   // Caution: do not use do_Op2(x) here for now since
+ 416   //          we map the condition to the op for now!
+ 417   move_const_to_right(x);
+ 418 }
+ 419 
+ 420 
+ 421 void Canonicalizer::do_Intrinsic      (Intrinsic*       x) {
+ 422   switch (x-&gt;id()) {
+ 423   case vmIntrinsics::_floatToRawIntBits   : {
+ 424     FloatConstant* c = x-&gt;argument_at(0)-&gt;type()-&gt;as_FloatConstant();
+ 425     if (c != NULL) {
+ 426       JavaValue v;
+ 427       v.set_jfloat(c-&gt;value());
+ 428       set_constant(v.get_jint());
+ 429     }
+ 430     break;
+ 431   }
+ 432   case vmIntrinsics::_intBitsToFloat      : {
+ 433     IntConstant* c = x-&gt;argument_at(0)-&gt;type()-&gt;as_IntConstant();
+ 434     if (c != NULL) {
+ 435       JavaValue v;
+ 436       v.set_jint(c-&gt;value());
+ 437       set_constant(v.get_jfloat());
+ 438     }
+ 439     break;
+ 440   }
+ 441   case vmIntrinsics::_doubleToRawLongBits : {
+ 442     DoubleConstant* c = x-&gt;argument_at(0)-&gt;type()-&gt;as_DoubleConstant();
+ 443     if (c != NULL) {
+ 444       JavaValue v;
+ 445       v.set_jdouble(c-&gt;value());
+ 446       set_constant(v.get_jlong());
+ 447     }
+ 448     break;
+ 449   }
+ 450   case vmIntrinsics::_longBitsToDouble    : {
+ 451     LongConstant* c = x-&gt;argument_at(0)-&gt;type()-&gt;as_LongConstant();
+ 452     if (c != NULL) {
+ 453       JavaValue v;
+ 454       v.set_jlong(c-&gt;value());
+ 455       set_constant(v.get_jdouble());
+ 456     }
+ 457     break;
+ 458   }
+ 459   case vmIntrinsics::_isInstance          : {
+ 460     assert(x-&gt;number_of_arguments() == 2, "wrong type");
+ 461 
+ 462     InstanceConstant* c = x-&gt;argument_at(0)-&gt;type()-&gt;as_InstanceConstant();
+ 463     if (c != NULL &amp;&amp; !c-&gt;value()-&gt;is_null_object()) {
+ 464       // ciInstance::java_mirror_type() returns non-NULL only for Java mirrors
+ 465       ciType* t = c-&gt;value()-&gt;as_instance()-&gt;java_mirror_type();
+ 466       if (t-&gt;is_klass()) {
+ 467         // substitute cls.isInstance(obj) of a constant Class into
+ 468         // an InstantOf instruction
+ 469         InstanceOf* i = new InstanceOf(t-&gt;as_klass(), x-&gt;argument_at(1), x-&gt;state_before());
+ 470         set_canonical(i);
+ 471         // and try to canonicalize even further
+ 472         do_InstanceOf(i);
+ 473       } else {
+ 474         assert(t-&gt;is_primitive_type(), "should be a primitive type");
+ 475         // cls.isInstance(obj) always returns false for primitive classes
+ 476         set_constant(0);
+ 477       }
+ 478     }
+ 479     break;
+ 480   }
+ 481   }
+ 482 }
+ 483 
+ 484 void Canonicalizer::do_Convert        (Convert*         x) {
+ 485   if (x-&gt;value()-&gt;type()-&gt;is_constant()) {
+ 486     switch (x-&gt;op()) {
+ 487     case Bytecodes::_i2b:  set_constant((int)((x-&gt;value()-&gt;type()-&gt;as_IntConstant()-&gt;value() &lt;&lt; 24) &gt;&gt; 24)); break;
+ 488     case Bytecodes::_i2s:  set_constant((int)((x-&gt;value()-&gt;type()-&gt;as_IntConstant()-&gt;value() &lt;&lt; 16) &gt;&gt; 16)); break;
+ 489     case Bytecodes::_i2c:  set_constant((int)(x-&gt;value()-&gt;type()-&gt;as_IntConstant()-&gt;value() &amp; ((1&lt;&lt;16)-1))); break;
+ 490     case Bytecodes::_i2l:  set_constant((jlong)(x-&gt;value()-&gt;type()-&gt;as_IntConstant()-&gt;value()));             break;
+ 491     case Bytecodes::_i2f:  set_constant((float)(x-&gt;value()-&gt;type()-&gt;as_IntConstant()-&gt;value()));             break;
+ 492     case Bytecodes::_i2d:  set_constant((double)(x-&gt;value()-&gt;type()-&gt;as_IntConstant()-&gt;value()));            break;
+ 493     case Bytecodes::_l2i:  set_constant((int)(x-&gt;value()-&gt;type()-&gt;as_LongConstant()-&gt;value()));              break;
+ 494     case Bytecodes::_l2f:  set_constant(SharedRuntime::l2f(x-&gt;value()-&gt;type()-&gt;as_LongConstant()-&gt;value())); break;
+ 495     case Bytecodes::_l2d:  set_constant(SharedRuntime::l2d(x-&gt;value()-&gt;type()-&gt;as_LongConstant()-&gt;value())); break;
+ 496     case Bytecodes::_f2d:  set_constant((double)(x-&gt;value()-&gt;type()-&gt;as_FloatConstant()-&gt;value()));          break;
+ 497     case Bytecodes::_f2i:  set_constant(SharedRuntime::f2i(x-&gt;value()-&gt;type()-&gt;as_FloatConstant()-&gt;value())); break;
+ 498     case Bytecodes::_f2l:  set_constant(SharedRuntime::f2l(x-&gt;value()-&gt;type()-&gt;as_FloatConstant()-&gt;value())); break;
+ 499     case Bytecodes::_d2f:  set_constant((float)(x-&gt;value()-&gt;type()-&gt;as_DoubleConstant()-&gt;value()));          break;
+ 500     case Bytecodes::_d2i:  set_constant(SharedRuntime::d2i(x-&gt;value()-&gt;type()-&gt;as_DoubleConstant()-&gt;value())); break;
+ 501     case Bytecodes::_d2l:  set_constant(SharedRuntime::d2l(x-&gt;value()-&gt;type()-&gt;as_DoubleConstant()-&gt;value())); break;
+ 502     default:
+ 503       ShouldNotReachHere();
+ 504     }
+ 505   }
+ 506 
+ 507   Value value = x-&gt;value();
+ 508   BasicType type = T_ILLEGAL;
+ 509   LoadField* lf = value-&gt;as_LoadField();
+ 510   if (lf) {
+ 511     type = lf-&gt;field_type();
+ 512   } else {
+ 513     LoadIndexed* li = value-&gt;as_LoadIndexed();
+ 514     if (li) {
+ 515       type = li-&gt;elt_type();
+ 516     } else {
+ 517       Convert* conv = value-&gt;as_Convert();
+ 518       if (conv) {
+ 519         switch (conv-&gt;op()) {
+ 520           case Bytecodes::_i2b: type = T_BYTE;  break;
+ 521           case Bytecodes::_i2s: type = T_SHORT; break;
+ 522           case Bytecodes::_i2c: type = T_CHAR;  break;
+ 523         }
+ 524       }
+ 525     }
+ 526   }
+ 527   if (type != T_ILLEGAL) {
+ 528     switch (x-&gt;op()) {
+ 529       case Bytecodes::_i2b: if (type == T_BYTE)                    set_canonical(x-&gt;value()); break;
+ 530       case Bytecodes::_i2s: if (type == T_SHORT || type == T_BYTE) set_canonical(x-&gt;value()); break;
+ 531       case Bytecodes::_i2c: if (type == T_CHAR)                    set_canonical(x-&gt;value()); break;
+ 532     }
+ 533   } else {
+ 534     Op2* op2 = x-&gt;value()-&gt;as_Op2();
+ 535     if (op2 &amp;&amp; op2-&gt;op() == Bytecodes::_iand &amp;&amp; op2-&gt;y()-&gt;type()-&gt;is_constant()) {
+ 536       jint safebits = 0;
+ 537       jint mask = op2-&gt;y()-&gt;type()-&gt;as_IntConstant()-&gt;value();
+ 538       switch (x-&gt;op()) {
+ 539         case Bytecodes::_i2b: safebits = 0x7f;   break;
+ 540         case Bytecodes::_i2s: safebits = 0x7fff; break;
+ 541         case Bytecodes::_i2c: safebits = 0xffff; break;
+ 542       }
+ 543       // When casting a masked integer to a smaller signed type, if
+ 544       // the mask doesn't include the sign bit the cast isn't needed.
+ 545       if (safebits &amp;&amp; (mask &amp; ~safebits) == 0) {
+ 546         set_canonical(x-&gt;value());
+ 547       }
+ 548     }
+ 549   }
+ 550 
+ 551 }
+ 552 
+ 553 void Canonicalizer::do_NullCheck      (NullCheck*       x) {
+ 554   if (x-&gt;obj()-&gt;as_NewArray() != NULL || x-&gt;obj()-&gt;as_NewInstance() != NULL) {
+ 555     set_canonical(x-&gt;obj());
+ 556   } else {
+ 557     Constant* con = x-&gt;obj()-&gt;as_Constant();
+ 558     if (con) {
+ 559       ObjectType* c = con-&gt;type()-&gt;as_ObjectType();
+ 560       if (c &amp;&amp; c-&gt;is_loaded()) {
+ 561         ObjectConstant* oc = c-&gt;as_ObjectConstant();
+ 562         if (!oc || !oc-&gt;value()-&gt;is_null_object()) {
+ 563           set_canonical(con);
+ 564         }
+ 565       }
+ 566     }
+ 567   }
+ 568 }
+ 569 
+ 570 void Canonicalizer::do_TypeCast       (TypeCast*        x) {}
+ 571 void Canonicalizer::do_Invoke         (Invoke*          x) {}
+ 572 void Canonicalizer::do_NewInstance    (NewInstance*     x) {}
+ 573 void Canonicalizer::do_NewTypeArray   (NewTypeArray*    x) {}
+ 574 void Canonicalizer::do_NewObjectArray (NewObjectArray*  x) {}
+ 575 void Canonicalizer::do_NewMultiArray  (NewMultiArray*   x) {}
+ 576 void Canonicalizer::do_CheckCast      (CheckCast*       x) {
+ 577   if (x-&gt;klass()-&gt;is_loaded()) {
+ 578     Value obj = x-&gt;obj();
+ 579     ciType* klass = obj-&gt;exact_type();
+ 580     if (klass == NULL) klass = obj-&gt;declared_type();
+ 581     if (klass != NULL &amp;&amp; klass-&gt;is_loaded() &amp;&amp; klass-&gt;is_subtype_of(x-&gt;klass())) {
+ 582       set_canonical(obj);
+ 583       return;
+ 584     }
+ 585     // checkcast of null returns null
+ 586     if (obj-&gt;as_Constant() &amp;&amp; obj-&gt;type()-&gt;as_ObjectType()-&gt;constant_value()-&gt;is_null_object()) {
+ 587       set_canonical(obj);
+ 588     }
+ 589   }
+ 590 }
+ 591 void Canonicalizer::do_InstanceOf     (InstanceOf*      x) {
+ 592   if (x-&gt;klass()-&gt;is_loaded()) {
+ 593     Value obj = x-&gt;obj();
+ 594     ciType* exact = obj-&gt;exact_type();
+ 595     if (exact != NULL &amp;&amp; exact-&gt;is_loaded() &amp;&amp; (obj-&gt;as_NewInstance() || obj-&gt;as_NewArray())) {
+ 596       set_constant(exact-&gt;is_subtype_of(x-&gt;klass()) ? 1 : 0);
+ 597       return;
+ 598     }
+ 599     // instanceof null returns false
+ 600     if (obj-&gt;as_Constant() &amp;&amp; obj-&gt;type()-&gt;as_ObjectType()-&gt;constant_value()-&gt;is_null_object()) {
+ 601       set_constant(0);
+ 602     }
+ 603   }
+ 604 
+ 605 }
+ 606 void Canonicalizer::do_MonitorEnter   (MonitorEnter*    x) {}
+ 607 void Canonicalizer::do_MonitorExit    (MonitorExit*     x) {}
+ 608 void Canonicalizer::do_BlockBegin     (BlockBegin*      x) {}
+ 609 void Canonicalizer::do_Goto           (Goto*            x) {}
+ 610 
+ 611 
+ 612 static bool is_true(jlong x, If::Condition cond, jlong y) {
+ 613   switch (cond) {
+ 614     case If::eql: return x == y;
+ 615     case If::neq: return x != y;
+ 616     case If::lss: return x &lt;  y;
+ 617     case If::leq: return x &lt;= y;
+ 618     case If::gtr: return x &gt;  y;
+ 619     case If::geq: return x &gt;= y;
+ 620   }
+ 621   ShouldNotReachHere();
+ 622   return false;
+ 623 }
+ 624 
+ 625 static bool is_safepoint(BlockEnd* x, BlockBegin* sux) {
+ 626   // An Instruction with multiple successors, x, is replaced by a Goto
+ 627   // to a single successor, sux. Is a safepoint check needed = was the
+ 628   // instruction being replaced a safepoint and the single remaining
+ 629   // successor a back branch?
+ 630   return x-&gt;is_safepoint() &amp;&amp; (sux-&gt;bci() &lt; x-&gt;state_before()-&gt;bci());
+ 631 }
+ 632 
+ 633 void Canonicalizer::do_If(If* x) {
+ 634   // move const to right
+ 635   if (x-&gt;x()-&gt;type()-&gt;is_constant()) x-&gt;swap_operands();
+ 636   // simplify
+ 637   const Value l = x-&gt;x(); ValueType* lt = l-&gt;type();
+ 638   const Value r = x-&gt;y(); ValueType* rt = r-&gt;type();
+ 639 
+ 640   if (l == r &amp;&amp; !lt-&gt;is_float_kind()) {
+ 641     // pattern: If (a cond a) =&gt; simplify to Goto
+ 642     BlockBegin* sux;
+ 643     switch (x-&gt;cond()) {
+ 644     case If::eql: sux = x-&gt;sux_for(true);  break;
+ 645     case If::neq: sux = x-&gt;sux_for(false); break;
+ 646     case If::lss: sux = x-&gt;sux_for(false); break;
+ 647     case If::leq: sux = x-&gt;sux_for(true);  break;
+ 648     case If::gtr: sux = x-&gt;sux_for(false); break;
+ 649     case If::geq: sux = x-&gt;sux_for(true);  break;
+ 650     }
+ 651     // If is a safepoint then the debug information should come from the state_before of the If.
+ 652     set_canonical(new Goto(sux, x-&gt;state_before(), is_safepoint(x, sux)));
+ 653     return;
+ 654   }
+ 655 
+ 656   if (lt-&gt;is_constant() &amp;&amp; rt-&gt;is_constant()) {
+ 657     if (x-&gt;x()-&gt;as_Constant() != NULL) {
+ 658       // pattern: If (lc cond rc) =&gt; simplify to: Goto
+ 659       BlockBegin* sux = x-&gt;x()-&gt;as_Constant()-&gt;compare(x-&gt;cond(), x-&gt;y(),
+ 660                                                        x-&gt;sux_for(true),
+ 661                                                        x-&gt;sux_for(false));
+ 662       if (sux != NULL) {
+ 663         // If is a safepoint then the debug information should come from the state_before of the If.
+ 664         set_canonical(new Goto(sux, x-&gt;state_before(), is_safepoint(x, sux)));
+ 665       }
+ 666     }
+ 667   } else if (rt-&gt;as_IntConstant() != NULL) {
+ 668     // pattern: If (l cond rc) =&gt; investigate further
+ 669     const jint rc = rt-&gt;as_IntConstant()-&gt;value();
+ 670     if (l-&gt;as_CompareOp() != NULL) {
+ 671       // pattern: If ((a cmp b) cond rc) =&gt; simplify to: If (x cond y) or: Goto
+ 672       CompareOp* cmp = l-&gt;as_CompareOp();
+ 673       bool unordered_is_less = cmp-&gt;op() == Bytecodes::_fcmpl || cmp-&gt;op() == Bytecodes::_dcmpl;
+ 674       BlockBegin* lss_sux = x-&gt;sux_for(is_true(-1, x-&gt;cond(), rc)); // successor for a &lt; b
+ 675       BlockBegin* eql_sux = x-&gt;sux_for(is_true( 0, x-&gt;cond(), rc)); // successor for a = b
+ 676       BlockBegin* gtr_sux = x-&gt;sux_for(is_true(+1, x-&gt;cond(), rc)); // successor for a &gt; b
+ 677       BlockBegin* nan_sux = unordered_is_less ? lss_sux : gtr_sux ; // successor for unordered
+ 678       // Note: At this point all successors (lss_sux, eql_sux, gtr_sux, nan_sux) are
+ 679       //       equal to x-&gt;tsux() or x-&gt;fsux(). Furthermore, nan_sux equals either
+ 680       //       lss_sux or gtr_sux.
+ 681       if (lss_sux == eql_sux &amp;&amp; eql_sux == gtr_sux) {
+ 682         // all successors identical =&gt; simplify to: Goto
+ 683         set_canonical(new Goto(lss_sux, x-&gt;state_before(), x-&gt;is_safepoint()));
+ 684       } else {
+ 685         // two successors differ and two successors are the same =&gt; simplify to: If (x cmp y)
+ 686         // determine new condition &amp; successors
+ 687         If::Condition cond;
+ 688         BlockBegin* tsux = NULL;
+ 689         BlockBegin* fsux = NULL;
+ 690              if (lss_sux == eql_sux) { cond = If::leq; tsux = lss_sux; fsux = gtr_sux; }
+ 691         else if (lss_sux == gtr_sux) { cond = If::neq; tsux = lss_sux; fsux = eql_sux; }
+ 692         else if (eql_sux == gtr_sux) { cond = If::geq; tsux = eql_sux; fsux = lss_sux; }
+ 693         else                         { ShouldNotReachHere();                           }
+ 694         If* canon = new If(cmp-&gt;x(), cond, nan_sux == tsux, cmp-&gt;y(), tsux, fsux, cmp-&gt;state_before(), x-&gt;is_safepoint());
+ 695         if (cmp-&gt;x() == cmp-&gt;y()) {
+ 696           do_If(canon);
+ 697         } else {
+ 698           if (compilation()-&gt;profile_branches()) {
+ 699             // TODO: If profiling, leave floating point comparisons unoptimized.
+ 700             // We currently do not support profiling of the unordered case.
+ 701             switch(cmp-&gt;op()) {
+ 702               case Bytecodes::_fcmpl: case Bytecodes::_fcmpg:
+ 703               case Bytecodes::_dcmpl: case Bytecodes::_dcmpg:
+ 704                 set_canonical(x);
+ 705                 return;
+ 706             }
+ 707           }
+ 708           set_bci(cmp-&gt;state_before()-&gt;bci());
+ 709           set_canonical(canon);
+ 710         }
+ 711       }
+ 712     } else if (l-&gt;as_InstanceOf() != NULL) {
+ 713       // NOTE: Code permanently disabled for now since it leaves the old InstanceOf
+ 714       //       instruction in the graph (it is pinned). Need to fix this at some point.
+ 715       //       It should also be left in the graph when generating a profiled method version or Goto
+ 716       //       has to know that it was an InstanceOf.
+ 717       return;
+ 718       // pattern: If ((obj instanceof klass) cond rc) =&gt; simplify to: IfInstanceOf or: Goto
+ 719       InstanceOf* inst = l-&gt;as_InstanceOf();
+ 720       BlockBegin* is_inst_sux = x-&gt;sux_for(is_true(1, x-&gt;cond(), rc)); // successor for instanceof == 1
+ 721       BlockBegin* no_inst_sux = x-&gt;sux_for(is_true(0, x-&gt;cond(), rc)); // successor for instanceof == 0
+ 722       if (is_inst_sux == no_inst_sux &amp;&amp; inst-&gt;is_loaded()) {
+ 723         // both successors identical and klass is loaded =&gt; simplify to: Goto
+ 724         set_canonical(new Goto(is_inst_sux, x-&gt;state_before(), x-&gt;is_safepoint()));
+ 725       } else {
+ 726         // successors differ =&gt; simplify to: IfInstanceOf
+ 727         set_canonical(new IfInstanceOf(inst-&gt;klass(), inst-&gt;obj(), true, inst-&gt;state_before()-&gt;bci(), is_inst_sux, no_inst_sux));
+ 728       }
+ 729     }
+ 730   } else if (rt == objectNull &amp;&amp; (l-&gt;as_NewInstance() || l-&gt;as_NewArray())) {
+ 731     if (x-&gt;cond() == Instruction::eql) {
+ 732       BlockBegin* sux = x-&gt;fsux();
+ 733       set_canonical(new Goto(sux, x-&gt;state_before(), is_safepoint(x, sux)));
+ 734     } else {
+ 735       assert(x-&gt;cond() == Instruction::neq, "only other valid case");
+ 736       BlockBegin* sux = x-&gt;tsux();
+ 737       set_canonical(new Goto(sux, x-&gt;state_before(), is_safepoint(x, sux)));
+ 738     }
+ 739   }
+ 740 }
+ 741 
+ 742 
+ 743 void Canonicalizer::do_TableSwitch(TableSwitch* x) {
+ 744   if (x-&gt;tag()-&gt;type()-&gt;is_constant()) {
+ 745     int v = x-&gt;tag()-&gt;type()-&gt;as_IntConstant()-&gt;value();
+ 746     BlockBegin* sux = x-&gt;default_sux();
+ 747     if (v &gt;= x-&gt;lo_key() &amp;&amp; v &lt;= x-&gt;hi_key()) {
+ 748       sux = x-&gt;sux_at(v - x-&gt;lo_key());
+ 749     }
+ 750     set_canonical(new Goto(sux, x-&gt;state_before(), is_safepoint(x, sux)));
+ 751   } else if (x-&gt;number_of_sux() == 1) {
+ 752     // NOTE: Code permanently disabled for now since the switch statement's
+ 753     //       tag expression may produce side-effects in which case it must
+ 754     //       be executed.
+ 755     return;
+ 756     // simplify to Goto
+ 757     set_canonical(new Goto(x-&gt;default_sux(), x-&gt;state_before(), x-&gt;is_safepoint()));
+ 758   } else if (x-&gt;number_of_sux() == 2) {
+ 759     // NOTE: Code permanently disabled for now since it produces two new nodes
+ 760     //       (Constant &amp; If) and the Canonicalizer cannot return them correctly
+ 761     //       yet. For now we copied the corresponding code directly into the
+ 762     //       GraphBuilder (i.e., we should never reach here).
+ 763     return;
+ 764     // simplify to If
+ 765     assert(x-&gt;lo_key() == x-&gt;hi_key(), "keys must be the same");
+ 766     Constant* key = new Constant(new IntConstant(x-&gt;lo_key()));
+ 767     set_canonical(new If(x-&gt;tag(), If::eql, true, key, x-&gt;sux_at(0), x-&gt;default_sux(), x-&gt;state_before(), x-&gt;is_safepoint()));
+ 768   }
+ 769 }
+ 770 
+ 771 
+ 772 void Canonicalizer::do_LookupSwitch(LookupSwitch* x) {
+ 773   if (x-&gt;tag()-&gt;type()-&gt;is_constant()) {
+ 774     int v = x-&gt;tag()-&gt;type()-&gt;as_IntConstant()-&gt;value();
+ 775     BlockBegin* sux = x-&gt;default_sux();
+ 776     for (int i = 0; i &lt; x-&gt;length(); i++) {
+ 777       if (v == x-&gt;key_at(i)) {
+ 778         sux = x-&gt;sux_at(i);
+ 779       }
+ 780     }
+ 781     set_canonical(new Goto(sux, x-&gt;state_before(), is_safepoint(x, sux)));
+ 782   } else if (x-&gt;number_of_sux() == 1) {
+ 783     // NOTE: Code permanently disabled for now since the switch statement's
+ 784     //       tag expression may produce side-effects in which case it must
+ 785     //       be executed.
+ 786     return;
+ 787     // simplify to Goto
+ 788     set_canonical(new Goto(x-&gt;default_sux(), x-&gt;state_before(), x-&gt;is_safepoint()));
+ 789   } else if (x-&gt;number_of_sux() == 2) {
+ 790     // NOTE: Code permanently disabled for now since it produces two new nodes
+ 791     //       (Constant &amp; If) and the Canonicalizer cannot return them correctly
+ 792     //       yet. For now we copied the corresponding code directly into the
+ 793     //       GraphBuilder (i.e., we should never reach here).
+ 794     return;
+ 795     // simplify to If
+ 796     assert(x-&gt;length() == 1, "length must be the same");
+ 797     Constant* key = new Constant(new IntConstant(x-&gt;key_at(0)));
+ 798     set_canonical(new If(x-&gt;tag(), If::eql, true, key, x-&gt;sux_at(0), x-&gt;default_sux(), x-&gt;state_before(), x-&gt;is_safepoint()));
+ 799   }
+ 800 }
+ 801 
+ 802 
+ 803 void Canonicalizer::do_Return         (Return*          x) {}
+ 804 void Canonicalizer::do_Throw          (Throw*           x) {}
+ 805 void Canonicalizer::do_Base           (Base*            x) {}
+ 806 void Canonicalizer::do_OsrEntry       (OsrEntry*        x) {}
+ 807 void Canonicalizer::do_ExceptionObject(ExceptionObject* x) {}
+ 808 
+ 809 static bool match_index_and_scale(Instruction*  instr,
+ 810                                   Instruction** index,
+ 811                                   int*          log2_scale) {
+ 812   // Skip conversion ops. This works only on 32bit because of the implicit l2i that the
+ 813   // unsafe performs.
+ 814 #ifndef _LP64
+ 815   Convert* convert = instr-&gt;as_Convert();
+ 816   if (convert != NULL &amp;&amp; convert-&gt;op() == Bytecodes::_i2l) {
+ 817     assert(convert-&gt;value()-&gt;type() == intType, "invalid input type");
+ 818     instr = convert-&gt;value();
+ 819   }
+ 820 #endif
+ 821 
+ 822   ShiftOp* shift = instr-&gt;as_ShiftOp();
+ 823   if (shift != NULL) {
+ 824     if (shift-&gt;op() == Bytecodes::_lshl) {
+ 825       assert(shift-&gt;x()-&gt;type() == longType, "invalid input type");
+ 826     } else {
+ 827 #ifndef _LP64
+ 828       if (shift-&gt;op() == Bytecodes::_ishl) {
+ 829         assert(shift-&gt;x()-&gt;type() == intType, "invalid input type");
+ 830       } else {
+ 831         return false;
+ 832       }
+ 833 #else
+ 834       return false;
+ 835 #endif
+ 836     }
+ 837 
+ 838 
+ 839     // Constant shift value?
+ 840     Constant* con = shift-&gt;y()-&gt;as_Constant();
+ 841     if (con == NULL) return false;
+ 842     // Well-known type and value?
+ 843     IntConstant* val = con-&gt;type()-&gt;as_IntConstant();
+ 844     assert(val != NULL, "Should be an int constant");
+ 845 
+ 846     *index = shift-&gt;x();
+ 847     int tmp_scale = val-&gt;value();
+ 848     if (tmp_scale &gt;= 0 &amp;&amp; tmp_scale &lt; 4) {
+ 849       *log2_scale = tmp_scale;
+ 850       return true;
+ 851     } else {
+ 852       return false;
+ 853     }
+ 854   }
+ 855 
+ 856   ArithmeticOp* arith = instr-&gt;as_ArithmeticOp();
+ 857   if (arith != NULL) {
+ 858     // See if either arg is a known constant
+ 859     Constant* con = arith-&gt;x()-&gt;as_Constant();
+ 860     if (con != NULL) {
+ 861       *index = arith-&gt;y();
+ 862     } else {
+ 863       con = arith-&gt;y()-&gt;as_Constant();
+ 864       if (con == NULL) return false;
+ 865       *index = arith-&gt;x();
+ 866     }
+ 867     long const_value;
+ 868     // Check for integer multiply
+ 869     if (arith-&gt;op() == Bytecodes::_lmul) {
+ 870       assert((*index)-&gt;type() == longType, "invalid input type");
+ 871       LongConstant* val = con-&gt;type()-&gt;as_LongConstant();
+ 872       assert(val != NULL, "expecting a long constant");
+ 873       const_value = val-&gt;value();
+ 874     } else {
+ 875 #ifndef _LP64
+ 876       if (arith-&gt;op() == Bytecodes::_imul) {
+ 877         assert((*index)-&gt;type() == intType, "invalid input type");
+ 878         IntConstant* val = con-&gt;type()-&gt;as_IntConstant();
+ 879         assert(val != NULL, "expecting an int constant");
+ 880         const_value = val-&gt;value();
+ 881       } else {
+ 882         return false;
+ 883       }
+ 884 #else
+ 885       return false;
+ 886 #endif
+ 887     }
+ 888     switch (const_value) {
+ 889     case 1: *log2_scale = 0; return true;
+ 890     case 2: *log2_scale = 1; return true;
+ 891     case 4: *log2_scale = 2; return true;
+ 892     case 8: *log2_scale = 3; return true;
+ 893     default:            return false;
+ 894     }
+ 895   }
+ 896 
+ 897   // Unknown instruction sequence; don't touch it
+ 898   return false;
+ 899 }
+ 900 
+ 901 
+ 902 static bool match(UnsafeRawOp* x,
+ 903                   Instruction** base,
+ 904                   Instruction** index,
+ 905                   int*          log2_scale) {
+ 906   ArithmeticOp* root = x-&gt;base()-&gt;as_ArithmeticOp();
+ 907   if (root == NULL) return false;
+ 908   // Limit ourselves to addition for now
+ 909   if (root-&gt;op() != Bytecodes::_ladd) return false;
+ 910 
+ 911   bool match_found = false;
+ 912   // Try to find shift or scale op
+ 913   if (match_index_and_scale(root-&gt;y(), index, log2_scale)) {
+ 914     *base = root-&gt;x();
+ 915     match_found = true;
+ 916   } else if (match_index_and_scale(root-&gt;x(), index, log2_scale)) {
+ 917     *base = root-&gt;y();
+ 918     match_found = true;
+ 919   } else if (NOT_LP64(root-&gt;y()-&gt;as_Convert() != NULL) LP64_ONLY(false)) {
+ 920     // Skipping i2l works only on 32bit because of the implicit l2i that the unsafe performs.
+ 921     // 64bit needs a real sign-extending conversion.
+ 922     Convert* convert = root-&gt;y()-&gt;as_Convert();
+ 923     if (convert-&gt;op() == Bytecodes::_i2l) {
+ 924       assert(convert-&gt;value()-&gt;type() == intType, "should be an int");
+ 925       // pick base and index, setting scale at 1
+ 926       *base  = root-&gt;x();
+ 927       *index = convert-&gt;value();
+ 928       *log2_scale = 0;
+ 929       match_found = true;
+ 930     }
+ 931   }
+ 932   // The default solution
+ 933   if (!match_found) {
+ 934     *base = root-&gt;x();
+ 935     *index = root-&gt;y();
+ 936     *log2_scale = 0;
+ 937   }
+ 938 
+ 939   // If the value is pinned then it will be always be computed so
+ 940   // there's no profit to reshaping the expression.
+ 941   return !root-&gt;is_pinned();
+ 942 }
+ 943 
+ 944 
+ 945 void Canonicalizer::do_UnsafeRawOp(UnsafeRawOp* x) {
+ 946   Instruction* base = NULL;
+ 947   Instruction* index = NULL;
+ 948   int          log2_scale;
+ 949 
+ 950   if (match(x, &amp;base, &amp;index, &amp;log2_scale)) {
+ 951     x-&gt;set_base(base);
+ 952     x-&gt;set_index(index);
+ 953     x-&gt;set_log2_scale(log2_scale);
+ 954     if (PrintUnsafeOptimization) {
+ 955       tty-&gt;print_cr("Canonicalizer: UnsafeRawOp id %d: base = id %d, index = id %d, log2_scale = %d",
+ 956                     x-&gt;id(), x-&gt;base()-&gt;id(), x-&gt;index()-&gt;id(), x-&gt;log2_scale());
+ 957     }
+ 958   }
+ 959 }
+ 960 
+ 961 void Canonicalizer::do_RoundFP(RoundFP* x) {}
+ 962 void Canonicalizer::do_UnsafeGetRaw(UnsafeGetRaw* x) { if (OptimizeUnsafes) do_UnsafeRawOp(x); }
+ 963 void Canonicalizer::do_UnsafePutRaw(UnsafePutRaw* x) { if (OptimizeUnsafes) do_UnsafeRawOp(x); }
+ 964 void Canonicalizer::do_UnsafeGetObject(UnsafeGetObject* x) {}
+ 965 void Canonicalizer::do_UnsafePutObject(UnsafePutObject* x) {}
+ 966 void Canonicalizer::do_UnsafeGetAndSetObject(UnsafeGetAndSetObject* x) {}
+ 967 void Canonicalizer::do_UnsafePrefetchRead (UnsafePrefetchRead*  x) {}
+ 968 void Canonicalizer::do_UnsafePrefetchWrite(UnsafePrefetchWrite* x) {}
+ 969 void Canonicalizer::do_ProfileCall(ProfileCall* x) {}
+ 970 void Canonicalizer::do_ProfileReturnType(ProfileReturnType* x) {}
+ 971 void Canonicalizer::do_ProfileInvoke(ProfileInvoke* x) {}
+ 972 void Canonicalizer::do_RuntimeCall(RuntimeCall* x) {}
+ 973 void Canonicalizer::do_RangeCheckPredicate(RangeCheckPredicate* x) {}
+ 974 #ifdef ASSERT
+ 975 void Canonicalizer::do_Assert(Assert* x) {}
+ 976 #endif
+ 977 void Canonicalizer::do_MemBar(MemBar* x) {}
+</pre></body></html>
